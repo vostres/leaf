@@ -1,3 +1,9 @@
+This repository is a fork of original LEAF repository.
+The only adjustments are removing black-box model training and adjusting few data shapes, so that this framework works with our model and dataset.
+
+Framework and implementation were suggested in:
+Amparore, E., Perotti, A., & Bajardi, P. (2021). To trust or not to trust an explanation: using LEAF to evaluate local linear XAI methods. PeerJ Comput. Sci., 7(6), e479. doi: 10.7717/peerj-cs.479
+
 # LEAF
 A Python framework for the quantitative evaluation of eXplainable AI methods.
 

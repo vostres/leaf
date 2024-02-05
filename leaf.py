@@ -1,68 +1,20 @@
-from ipywidgets import IntProgress, Textarea, HTML, HBox, Label
+from ipywidgets import IntProgress, HTML, HBox, Label
 from IPython.display import display
-import tabulate
-import matplotlib.colors as mc
-import colorsys
-import warnings, importlib, copy, random, mock, os, math, ast
+import copy, mock
 import numpy as np
 import numpy.linalg as linalg
-# from numpy import linalg as linalg
 import matplotlib.pyplot as plt
-from numpy.random import lognormal, normal, exponential
-from scipy.stats import multivariate_normal, norm, spearmanr
 import pandas as pd
-import seaborn as sns
-import sklearn, tqdm, scipy
+import sklearn, scipy
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_score, recall_score
-from sklearn.metrics import classification_report
-from sklearn import preprocessing
 from scipy.spatial.distance import pdist, cdist
-from imblearn.over_sampling import SMOTE
-from collections import Counter
+from sklearn.model_selection import train_test_split
 
 import shap
 import lime
 from lime.lime_tabular import LimeTabularExplainer
 
 ###########################################################################################
-
-def train_model(X, Y, model, verbose=True):
-    # separate train and test sets
-    train, test, labels_train, labels_test = (
-        sklearn.model_selection.train_test_split(X, Y, train_size=0.80, test_size=0.20,
-                                                 random_state=1234))
-
-    cls_type = model.__class__.__name__
-    use_weights = not (cls_type in ['MLPClassifier', 'KNeighborsClassifier', 'GaussianProcessClassifier'])
-
-    if use_weights:
-        nT = sum(labels_train)
-        nF = len(labels_train) - nT
-        weights_train = ((labels_train==False)*nT + (labels_train==True)*nF) / len(labels_train)
-    
-        model.fit(train, labels_train, sample_weight=weights_train)
-    else:
-        model.fit(train, labels_train)
-    
-    # verify the classifier on the test set
-    pred_test = model.predict(test)
-    # print(pred_test, type(pred_test), pred_test.dtype)
-    # pred_test = pred_test > 0.5 if str(pred_test.dtype).startswith('float') else pred_test
-    if use_weights:
-        nT = sum(labels_test)
-        nF = len(labels_test) - nT
-        weights_test = ((labels_test==False)*nT + (labels_test==True)*nF) / len(labels_test)
-        print('  *', cls_type, 'accuracy:', 
-              sklearn.metrics.accuracy_score(labels_test, pred_test, sample_weight=weights_test))
-    else:
-        print('  *', cls_type, 'accuracy:', 
-              sklearn.metrics.accuracy_score(labels_test, pred_test))
-
-    pred_X = model.predict(X)
-    #print(classification_report(Y, pred_X))
-    if verbose:
-        print(classification_report(labels_test, pred_test))
-    return model
 
 ###########################################################################################
 
@@ -74,20 +26,17 @@ def get_LIME_classifier(lime_expl, label_x0, x0):
     coef = np.zeros(len(x0))
     coef[features_indices] = features_weights
     if hasattr(lime_expl, 'perfect_local_concordance') and lime_expl.perfect_local_concordance:
-        # print('have perfect_local_concordance classifier!')
+
         g = lime.lime_base.TranslatedRidge(alpha=1.0)
         g.x0 = np.zeros(len(x0))
         g.x0 = lime_expl.x0
-        # g.x0[features_indices] = lime_expl.x0[features_indices]
+
         g.f_x0 = lime_expl.predict_proba[label_x0]
         g.coef_ = g.ridge.coef_ = coef
         g.intercept_ = g.ridge.intercept_ = intercept
-        # print('g.x0', g.x0)
-        # print('g.f_x0', g.f_x0)
-        # print('g.coef_', g.coef_)
-        # print('g.intercept_', g.intercept_)
+        
     else:
-        g = sklearn.linear_model.Ridge(alpha=1.0, fit_intercept=True, normalize=False)
+        g = sklearn.linear_model.Ridge(alpha=1.0, fit_intercept=True)
         g.coef_ = coef
         g.intercept_ = intercept
     return g
@@ -95,7 +44,7 @@ def get_LIME_classifier(lime_expl, label_x0, x0):
 # Build the linear classifier of a SHAP explainer
 def get_SHAP_classifier(label_x0, phi, phi0, x0, EX):
     coef = np.divide(phi[label_x0], (x0 - EX), where=(x0 - EX)!=0)
-    g = sklearn.linear_model.Ridge(alpha=1.0, fit_intercept=True, normalize=False)
+    g = sklearn.linear_model.Ridge(alpha=1.0, fit_intercept=True)
     g.coef_ = coef
     g.intercept_ = phi0[label_x0]
     return g
@@ -106,12 +55,11 @@ def eval_whitebox_classifier(R, g, EX, StdX, NormV, x0, label_x0, bb_classifier,
                              precision_recalls=False):
     # scale x0 in the ridge model space
     sx0 = np.divide((x0 - EX), StdX, where=np.logical_not(np.isclose(StdX, 0)))
-    # sx0 = np.divide((x0 - EX), StdX, where=StdX!=0)
-    # compute the p-score of sx0
+
     sx0_w = np.dot(sx0, g.coef_)
     p_score = sx0_w + g.intercept_
 
-    if linalg.norm(g.coef_) < 1.0e-5 or (abs(sx0_w) < 1.0e-5):# or math.isclose(p_score, 0) or math.isclose(p_score, 1):
+    if linalg.norm(g.coef_) < 1.0e-5 or (abs(sx0_w) < 1.0e-5):
         N_sx0_w = np.zeros(len(x0))
         R.wb_plane_dist_x0 = 0.0
     else:
@@ -122,7 +70,7 @@ def eval_whitebox_classifier(R, g, EX, StdX, NormV, x0, label_x0, bb_classifier,
     sx1 = sx0 + N_sx0_w
     x1 = (sx1 * StdX) + EX
 
-    prob_x1 = bb_classifier([x1])[0] 
+    prob_x1 = bb_classifier(np.array([x1]))[0]
     R.wb_class_x1 = 1 if prob_x1[1] > prob_x1[0] else 0
     R.wb_prob_x1_F = prob_x1[0]
     R.wb_prob_x1_T = prob_x1[1]
@@ -166,18 +114,13 @@ def eval_whitebox_classifier(R, g, EX, StdX, NormV, x0, label_x0, bb_classifier,
         R.wb_fidelity_f1 = f1_score(BBCLS0, WBCLS0)
         R.wb_prescriptivity_f1 = f1_score(BBCLS1, WBCLS1)
 
-        # print(sklearn.metrics.confusion_matrix(BBCLS1, WBCLS1), wb_name)
-
         if precision_recalls:
             R.wb_precision_x1 = precision_score(BBCLS1, WBCLS1)
             R.wb_recall_x1 = recall_score(BBCLS1, WBCLS1)
 
-        # R.wb_fidelity_R2 = g.score(SNX0, BBY0)
-        # R.wb_prescriptivity_R2 = g.score(SNX1, BBY1)
     except:
         R.wb_bal_fidelity, R.wb_bal_prescriptivity = 0, 0
         R.wb_fidelity, R.wb_prescriptivity = 0, 0
-        # R.wb_fidelity_R2, R.wb_prescriptivity_R2 = 0, 0
         R.wb_fidelity_f1, R.wb_prescriptivity_f1 = 0, 0
 
     # rename R keys (wb_* -> wb_name_*)
@@ -195,7 +138,9 @@ def hinge_loss(x):
 ###########################################################################################
 
 class LEAF:
-    def __init__(self, bb_classifier, X, class_names, explanation_samples=5000):
+    def __init__(self, bb_classifier, X_full, y, class_names, explanation_samples=5000):
+        _, X, _, _ = train_test_split(
+            X_full, y, test_size=0.0005, stratify=y, random_state=0)
         self.bb_classifier = bb_classifier
         self.EX, self.StdX = np.mean(X), np.array(np.std(X, axis=0, ddof=0))
         self.class_names = class_names
@@ -203,11 +148,10 @@ class LEAF:
         self.explanation_samples = explanation_samples
 
         # SHAP Kernel
-        self.SHAPEXPL = shap.KernelExplainer(self.bb_classifier.predict_proba, self.EX, 
-        									 nsamples=explanation_samples)
+        self.SHAPEXPL = shap.KernelExplainer(self.bb_classifier.predict, X, nsamples=explanation_samples)
 
         # LIME Kernel
-        self.LIMEEXPL = LimeTabularExplainer(X.astype('float'), 
+        self.LIMEEXPL = LimeTabularExplainer(X, 
 	                                         feature_names=X.columns.tolist(), 
 	                                         class_names=self.class_names, 
 	                                         discretize_continuous=False,
@@ -226,7 +170,7 @@ class LEAF:
                          neighborhood_samples=10000, use_cov_matrix=False, 
                          verbose=False, figure_dir=None):
         npEX = np.array(self.EX)
-        cls_proba = self.bb_classifier.predict_proba
+        cls_proba = self.bb_classifier.predict
 
         x0 = copy.deepcopy(instance) # instance to be explained
         mockobj = mock.Mock()
@@ -237,7 +181,7 @@ class LEAF:
                                                     size=neighborhood_samples, random_state=10)
 
         # Get the output of the black-box classifier on x0
-        output = cls_proba([x0])[0]
+        output = cls_proba(np.array([x0]))[0]
         label_x0 = np.argmax(output)
         prob_x0 = output[label_x0]
         prob_x0_F, prob_x0_T = output[0], output[1]
@@ -303,10 +247,6 @@ class LEAF:
             R.lime_bin_expl[np.array(R.mcf_lime)] = 1
             R.shap_bin_expl[np.array(R.mcf_shap)] = 1
 
-            # Save the Ridge regressors built by LIME and SHAP
-            # lime_g_W, shap_g_W = tuple(lime_g.coef_), tuple(shap_g.coef_)
-            # lime_g_w0, shap_g_w0 = lime_g.intercept_, shap_g.intercept_
-
             # get the appropriate R keys
             R_keys = copy.copy(R.__dict__)
             for key in copy.copy(list(R_keys.keys())):
@@ -316,7 +256,7 @@ class LEAF:
                     del R_keys[key]
 
             rows = pd.DataFrame(columns=R_keys) if rows is None else rows
-            rows = rows.append({k:R.__dict__[k] for k in R_keys}, ignore_index=True)
+            rows = rows._append({k:R.__dict__[k] for k in R_keys}, ignore_index=True)
             progbar.value += 1
 
         label.value += " Done."
@@ -363,7 +303,6 @@ class LEAF:
             ax2.tick_params(axis='both', which='major', labelsize=12)
             ax2.set_ylabel('Values', color='#000080')  # we already handled the x-label with ax1
             ax2.boxplot(data, vert=False, widths=0.7)
-            # ax2.boxplot([np.mean(d) for d in data], color=color)
             ax2.tick_params(axis='y', labelcolor='#000080')
             ax2.set_yticks(np.arange(1, len(data)+1))
             ax2.set_yticklabels([ "  %.3f ± %.3f  " % (np.mean(d), np.std(d)) for d in data])
@@ -410,10 +349,6 @@ class LEAF:
 
             print("LIME(x1) prob =", lime_output_x1)
             print("SHAP(x1) prob =", shap_output_x1)
-
-            # df = pd.DataFrame([x0, x0 + shap_diff], index=['x', 'x\'']).round(2)
-            # display(df.T.iloc[:math.ceil(F/2),:])
-            # display(df.T.iloc[math.ceil(F/2):,:])
 
             # Show LIME explanation
             lime_expl = LIMEEXPL.explain_instance(np.array(shap_x1), cls_proba, 
@@ -470,23 +405,3 @@ class LEAF:
         return hinge_loss(np.mean(2 * np.abs(self.metrics.shap_boundary_discr)))
 
     #------------------------------------------#
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
