@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='leafxai',
-    version='0.1.2',
+    name='leaf',
+    version='0.1.3',
     description='A Python framework for the quantitative evaluation of eXplainable AI methods.',
     author='@amparore',
     packages=find_packages(),
